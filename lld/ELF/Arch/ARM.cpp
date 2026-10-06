@@ -16,6 +16,7 @@
 #include "lld/Common/Filesystem.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/TargetParser/TC32.h"
 
 using namespace llvm;
 using namespace llvm::support::endian;
@@ -67,6 +68,14 @@ public:
   DenseMap<InputSection *, SmallVector<const Defined *, 0>> sectionMap;
 
 private:
+  // The target's functions on a Thumb or ARM instruction; with TC32,
+  // relocate, getImplicitAddend and needsThunk call them through Thumb.
+  void relocateThumbOrArm(uint8_t *loc, const Relocation &rel,
+                          uint64_t val) const;
+  int64_t getImplicitAddendThumbOrArm(const uint8_t *buf, RelType type) const;
+  bool needsThunkThumbOrArm(RelExpr expr, RelType type, const InputFile *file,
+                            uint64_t branchAddr, const Symbol &s,
+                            int64_t a) const;
   void encodeAluGroup(uint8_t *loc, const Relocation &rel, uint64_t val,
                       int group, bool check) const;
 };
@@ -114,6 +123,12 @@ ARM::ARM(Ctx &ctx) : TargetInfo(ctx) {
   pltEntrySize = 16;
   ipltEntrySize = 16;
   trapInstr = {0xd4, 0xd4, 0xd4, 0xd4};
+  // TC32: the Thumb halfword 0xd4d4 in TC32's encoding. The target is set up
+  // after all input files, LTO output included, have been read.
+  if (ctx.arg.armTC32) {
+    write16le(trapInstr.data(), llvm::TC32::toTC32(0xd4d4));
+    write16le(trapInstr.data() + 2, llvm::TC32::toTC32(0xd4d4));
+  }
   needsThunks = true;
   defaultMaxPageSize = 65536;
 }
@@ -437,6 +452,9 @@ static void writePltLong(Ctx &ctx, uint8_t *buf, uint64_t gotPltEntryAddr,
 // .plt in the positive direction.
 void ARM::writePlt(uint8_t *buf, const Symbol &sym,
                    uint64_t pltEntryAddr) const {
+  if (ctx.arg.armTC32)
+    Err(ctx) << "TC32: the PLT entry for " << sym.getName()
+             << " would be Thumb or ARM code, which a TC32 image cannot have";
   if (!useThumbPLTs(ctx)) {
     uint64_t offset = sym.getGotPltVA(ctx) - pltEntryAddr - 8;
 
@@ -497,9 +515,75 @@ void ARM::addPltSymbols(InputSection &isec, uint64_t off) const {
   }
 }
 
+// Telink TC32 (ctx.arg.armTC32): the number of instruction halfwords a Thumb
+// relocation type patches, 0 for the other types.
+static unsigned tc32Halfwords(RelType type) {
+  switch (type) {
+  case R_ARM_THM_JUMP8:
+  case R_ARM_THM_JUMP11:
+  case R_ARM_THM_PC8:
+  case R_ARM_THM_ALU_ABS_G0_NC:
+  case R_ARM_THM_ALU_ABS_G1_NC:
+  case R_ARM_THM_ALU_ABS_G2_NC:
+  case R_ARM_THM_ALU_ABS_G3:
+    return 1;
+  case R_ARM_THM_CALL:
+  case R_ARM_THM_JUMP19:
+  case R_ARM_THM_JUMP24:
+  case R_ARM_THM_MOVT_ABS:
+  case R_ARM_THM_MOVT_PREL:
+  case R_ARM_THM_MOVT_BREL:
+  case R_ARM_THM_MOVW_ABS_NC:
+  case R_ARM_THM_MOVW_PREL_NC:
+  case R_ARM_THM_MOVW_BREL_NC:
+  case R_ARM_THM_ALU_PREL_11_0:
+  case R_ARM_THM_PC12:
+    return 2;
+  default:
+    return 0;
+  }
+}
+
+static void tc32Convert(uint8_t *loc, unsigned n, uint16_t (*conv)(uint16_t)) {
+  for (unsigned i = 0; i != n; ++i)
+    write16le(loc + 2 * i, conv(read16le(loc + 2 * i)));
+}
+
+// TC32 instructions are patched and read in Thumb's encoding.
+void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
+  unsigned n = ctx.arg.armTC32 ? tc32Halfwords(rel.type) : 0;
+  tc32Convert(loc, n, llvm::TC32::toThumb);
+  relocateThumbOrArm(loc, rel, val);
+  tc32Convert(loc, n, llvm::TC32::toTC32);
+}
+
+int64_t ARM::getImplicitAddend(const uint8_t *buf, RelType type) const {
+  unsigned n = ctx.arg.armTC32 ? tc32Halfwords(type) : 0;
+  if (!n)
+    return getImplicitAddendThumbOrArm(buf, type);
+  uint8_t thumb[4];
+  memcpy(thumb, buf, 2 * n);
+  tc32Convert(thumb, n, llvm::TC32::toThumb);
+  return getImplicitAddendThumbOrArm(thumb, type);
+}
+
+// A thunk is Thumb or ARM code lld writes; TC32 has no ARM state, and a
+// TC32 image has no use for a range extension.
 bool ARM::needsThunk(RelExpr expr, RelType type, const InputFile *file,
-                     uint64_t branchAddr, const Symbol &s,
-                     int64_t a) const {
+                     uint64_t branchAddr, const Symbol &s, int64_t a) const {
+  bool need = needsThunkThumbOrArm(expr, type, file, branchAddr, s, a);
+  if (need && ctx.arg.armTC32) {
+    Err(ctx) << file << ": TC32: the branch to " << s.getName()
+             << " needs a thunk (out of range, or to ARM code), which a TC32 "
+                "image cannot have";
+    return false;
+  }
+  return need;
+}
+
+bool ARM::needsThunkThumbOrArm(RelExpr expr, RelType type,
+                               const InputFile *file, uint64_t branchAddr,
+                               const Symbol &s, int64_t a) const {
   // If s is an undefined weak symbol and does not have a PLT entry then it will
   // be resolved as a branch to the next instruction. If it is hidden, its
   // binding has been converted to local, so we just check isUndefined() here. A
@@ -714,7 +798,8 @@ static void encodeLdrsGroup(Ctx &ctx, uint8_t *loc, const Relocation &rel,
               (imm & 0xf));
 }
 
-void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
+void ARM::relocateThumbOrArm(uint8_t *loc, const Relocation &rel,
+                             uint64_t val) const {
   switch (rel.type) {
   case R_ARM_ABS32:
   case R_ARM_BASE_PREL:
@@ -985,7 +1070,8 @@ void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
   }
 }
 
-int64_t ARM::getImplicitAddend(const uint8_t *buf, RelType type) const {
+int64_t ARM::getImplicitAddendThumbOrArm(const uint8_t *buf,
+                                         RelType type) const {
   switch (type) {
   default:
     InternalErr(ctx, buf) << "cannot read addend for relocation " << type;

@@ -329,6 +329,12 @@ struct Config {
   bool armHasMovtMovw = false;
   bool armJ1J2BranchEncoding = false;
   bool armCMSESupport = false;
+  // Telink TC32: an input object's Tag_CPU_name is "tc32", so its Thumb
+  // instructions are in TC32's encoding (llvm/TargetParser/TC32.h).
+  bool armTC32 = false;
+  const InputFile *armTC32File = nullptr;     // the first TC32 object
+  const InputFile *armOtherCpuFile = nullptr; // the first naming another CPU
+  StringRef armOtherCpu;
   bool asNeeded = false;
   bool armBe8 = false;
   BsymbolicKind bsymbolic = BsymbolicKind::None;

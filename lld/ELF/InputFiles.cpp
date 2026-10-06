@@ -142,6 +142,35 @@ static void updateARMVFPArgs(Ctx &ctx, const ARMAttributeParser &attributes,
     ctx.arg.armVFPArgs = arg;
 }
 
+// Telink TC32: an object whose Tag_CPU_name is "tc32" holds its Thumb
+// instructions in TC32's encoding, which ARM::relocate reads and writes through
+// Thumb's. Such code cannot be linked with code built for another core, whose
+// instructions are in Thumb's encoding, nor with code whose object does not
+// name its core (cpu is empty), as nothing tells which encoding it is in.
+static void updateARMTC32(Ctx &ctx, StringRef cpu, bool hasCode,
+                          const InputFile *file) {
+  if (cpu.empty() && !hasCode)
+    return;
+  bool hadBoth = ctx.arg.armTC32File && ctx.arg.armOtherCpuFile;
+  if (cpu.equals_insensitive("tc32")) {
+    ctx.arg.armTC32 = true;
+    if (!ctx.arg.armTC32File)
+      ctx.arg.armTC32File = file;
+  } else if (!ctx.arg.armOtherCpuFile) {
+    ctx.arg.armOtherCpuFile = file;
+    ctx.arg.armOtherCpu = cpu;
+  }
+  if (!hadBoth && ctx.arg.armTC32File && ctx.arg.armOtherCpuFile) {
+    auto diag = ErrAlways(ctx);
+    diag << ctx.arg.armTC32File << ": TC32 code cannot be linked with "
+         << ctx.arg.armOtherCpuFile;
+    if (ctx.arg.armOtherCpu.empty())
+      diag << ", which holds code and has no Tag_CPU_name";
+    else
+      diag << ", built for " << ctx.arg.armOtherCpu;
+  }
+}
+
 // The ARM support in lld makes some use of instructions that are not available
 // on all ARM architectures. Namely:
 // - Use of BLX instruction for interworking between ARM and Thumb state.
@@ -583,8 +612,12 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
   StringRef shstrtab = CHECK2(obj.getSectionStringTable(objSections), this);
   uint64_t size = objSections.size();
   sections.resize(size);
+  StringRef armCpu;
+  bool armCode = false;
   for (size_t i = 0; i != size; ++i) {
     const Elf_Shdr &sec = objSections[i];
+    if ((sec.sh_flags & SHF_EXECINSTR) && sec.sh_size)
+      armCode = true;
 
     if (LLVM_LIKELY(sec.sh_type == SHT_PROGBITS))
       continue;
@@ -655,6 +688,9 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
           Warn(ctx) << &isec << ": " << std::move(e);
         } else {
           updateSupportedARMFeatures(ctx, attributes);
+          if (std::optional<StringRef> cpu =
+                  attributes.getAttributeString(ARMBuildAttrs::CPU_name))
+            armCpu = *cpu;
           updateARMVFPArgs(ctx, attributes, this);
 
           // FIXME: Retain the first attribute section we see. The eglibc ARM
@@ -680,6 +716,8 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
       break;
     }
   }
+  if (ctx.arg.emachine == EM_ARM)
+    updateARMTC32(ctx, armCpu, armCode, this);
 
   // Read a symbol table.
   initializeSymbols(obj);
