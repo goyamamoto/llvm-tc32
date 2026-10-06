@@ -26,6 +26,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
+#include "llvm/TargetParser/TC32.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -6365,6 +6366,11 @@ DecodeStatus ARMDisassembler::getThumbInstruction(MCInst &MI, uint64_t &Size,
 
   uint16_t Insn16 = llvm::support::endian::read<uint16_t>(
       Bytes.data(), InstructionEndianness);
+  // TC32: each halfword in TC32's encoding, read as the Thumb instruction
+  // with the same meaning.
+  const bool TC32 = STI.hasFeature(ARM::FeatureTC32);
+  if (TC32)
+    Insn16 = TC32::toThumb(Insn16);
   DecodeStatus Result =
       decodeInstruction(DecoderTableThumb16, MI, Insn16, Address, this, STI);
   if (Result != MCDisassembler::Fail) {
@@ -6415,9 +6421,11 @@ DecodeStatus ARMDisassembler::getThumbInstruction(MCInst &MI, uint64_t &Size,
     return MCDisassembler::Fail;
   }
 
-  uint32_t Insn32 =
-      (uint32_t(Insn16) << 16) | llvm::support::endian::read<uint16_t>(
-                                     Bytes.data() + 2, InstructionEndianness);
+  uint16_t Insn16b = llvm::support::endian::read<uint16_t>(
+      Bytes.data() + 2, InstructionEndianness);
+  if (TC32)
+    Insn16b = TC32::toThumb(Insn16b);
+  uint32_t Insn32 = (uint32_t(Insn16) << 16) | Insn16b;
 
   Result =
       decodeInstruction(DecoderTableMVE32, MI, Insn32, Address, this, STI);

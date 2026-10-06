@@ -195,6 +195,8 @@ INSTANTIATE_TEST_SUITE_P(
                                    "4T"),
         ARMCPUTestParams<uint64_t>("arm7tdmi-s", "armv4t", "none",
                                    ARM::AEK_NONE, "4T"),
+        ARMCPUTestParams<uint64_t>("tc32", "armv4t", "none", ARM::AEK_NONE,
+                                   "4T"),
         ARMCPUTestParams<uint64_t>("arm710t", "armv4t", "none", ARM::AEK_NONE,
                                    "4T"),
         ARMCPUTestParams<uint64_t>("arm720t", "armv4t", "none", ARM::AEK_NONE,
@@ -536,7 +538,7 @@ INSTANTIATE_TEST_SUITE_P(
                                    "7-S")),
     ARMCPUTestParams<uint64_t>::PrintToStringParamName);
 
-static constexpr unsigned NumARMCPUArchs = 95;
+static constexpr unsigned NumARMCPUArchs = 96;
 
 TEST(FeatureBitsetTest, Iterator) {
   // Empty bitset yields nothing.

@@ -68,6 +68,7 @@ class LLVM_ABI ELFObjectFileBase : public ObjectFile {
 
   StringRef getAMDGPUCPUName() const;
   StringRef getNVPTXCPUName() const;
+  std::optional<StringRef> getARMCPUName() const;
 
 protected:
   ELFObjectFileBase(unsigned int Type, MemoryBufferRef Source);

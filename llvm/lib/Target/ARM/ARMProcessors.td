@@ -122,6 +122,10 @@ def : ProcNoItin<"strongarm1110",                       [ARMv4]>;
 
 def : ProcNoItin<"arm7tdmi",                            [ARMv4t]>;
 def : ProcNoItin<"arm7tdmi-s",                          [ARMv4t]>;
+// Telink TC32 (TLSR825x, TLSR827x): ARMv4T Thumb-1 without ARM state, its
+// instructions in TC32's encoding.
+def : ProcNoItin<"tc32",                                [ARMv4t, FeatureNoARM,
+                                                         FeatureTC32]>;
 def : ProcNoItin<"arm710t",                             [ARMv4t]>;
 def : ProcNoItin<"arm720t",                             [ARMv4t]>;
 def : ProcNoItin<"arm9",                                [ARMv4t]>;

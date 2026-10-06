@@ -13,6 +13,7 @@
 // CHECK-SAME: {{^}}, strongarm1110
 // CHECK-SAME: {{^}}, arm7tdmi
 // CHECK-SAME: {{^}}, arm7tdmi-s
+// CHECK-SAME: {{^}}, tc32
 // CHECK-SAME: {{^}}, arm710t
 // CHECK-SAME: {{^}}, arm720t
 // CHECK-SAME: {{^}}, arm9

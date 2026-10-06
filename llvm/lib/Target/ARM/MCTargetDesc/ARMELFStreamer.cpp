@@ -50,6 +50,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/TC32.h"
 #include <cassert>
 #include <climits>
 #include <cstdint>
@@ -551,6 +552,16 @@ public:
 
       assert(IsThumb);
       EmitThumbMappingSymbol();
+      // TC32: the value is a Thumb instruction, written in TC32's encoding as
+      // the code emitter writes instructions.
+      if (const MCSubtargetInfo *STI = getContext().getSubtargetInfo();
+          STI && STI->hasFeature(ARM::FeatureTC32)) {
+        if (Size == 4)
+          Inst = uint32_t(TC32::encodeInstr(Inst >> 16)) << 16 |
+                 TC32::encodeInstr(Inst & 0xffff);
+        else
+          Inst = TC32::encodeInstr(Inst);
+      }
       // Thumb wide instructions are emitted as a pair of 16-bit words of the
       // appropriate endianness.
       for (unsigned II = 0, IE = Size; II != IE; II = II + 2) {

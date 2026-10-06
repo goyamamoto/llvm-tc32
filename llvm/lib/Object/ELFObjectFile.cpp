@@ -415,9 +415,27 @@ std::optional<StringRef> ELFObjectFileBase::tryGetCPUName() const {
     return StringRef("future");
   case ELF::EM_BPF:
     return StringRef("v4");
+  case ELF::EM_ARM:
+    return getARMCPUName();
   default:
     return std::nullopt;
   }
+}
+
+// Telink TC32 code is Thumb-1 in an encoding of its own, which only the
+// "tc32" CPU reads; for the other cores the triple and the features from the
+// build attributes are enough.
+std::optional<StringRef> ELFObjectFileBase::getARMCPUName() const {
+  ARMAttributeParser Attributes;
+  if (Error E = getBuildAttributes(Attributes)) {
+    consumeError(std::move(E));
+    return std::nullopt;
+  }
+  std::optional<StringRef> CPU =
+      Attributes.getAttributeString(ARMBuildAttrs::CPU_name);
+  if (CPU && CPU->equals_insensitive("tc32"))
+    return StringRef("tc32");
+  return std::nullopt;
 }
 
 StringRef ELFObjectFileBase::getAMDGPUCPUName() const {

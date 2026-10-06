@@ -646,6 +646,13 @@ def FeatureNoARM  : SubtargetFeature<"noarm", "NoARM", "true",
                                      "Does not support ARM mode execution",
                                      [], InlineMustMatch>;
 
+// True if Thumb instructions are written in Telink TC32's encoding (Thumb-1
+// with the top five bits of each halfword assigned differently). Only the MC
+// layer reads it: code generation is that of the Thumb-1 core.
+def FeatureTC32   : SubtargetFeature<"tc32", "IsTC32", "true",
+                                     "Write Thumb instructions in Telink TC32's encoding",
+                                     [], InlineMustMatch>;
+
 //===----------------------------------------------------------------------===//
 // ARM ISAa.
 //

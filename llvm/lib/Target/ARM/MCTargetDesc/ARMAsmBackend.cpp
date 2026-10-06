@@ -33,6 +33,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/TC32.h"
 using namespace llvm;
 
 namespace {
@@ -356,8 +357,10 @@ bool ARMAsmBackend::writeNopData(raw_ostream &OS, uint64_t Count,
   const uint32_t ARMv4_NopEncoding = 0xe1a00000;   // using MOV r0,r0
   const uint32_t ARMv6T2_NopEncoding = 0xe320f000; // NOP
   if (STI->hasFeature(ARM::ModeThumb)) {
-    const uint16_t nopEncoding =
+    uint16_t nopEncoding =
         hasNOP(STI) ? Thumb2_16bitNopEncoding : Thumb1_16bitNopEncoding;
+    if (STI->hasFeature(ARM::FeatureTC32))
+      nopEncoding = TC32::encodeInstr(nopEncoding);
     uint64_t NumNops = Count / 2;
     for (uint64_t i = 0; i != NumNops; ++i)
       support::endian::write(OS, nopEncoding, Endian);
@@ -1135,6 +1138,22 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     assert(NumBytes <= FullSizeBytes && "Invalid fixup size!");
   }
 
+  // TC32: an instruction fixup's halfwords are in TC32's encoding; the fields
+  // are filled in through Thumb's (data fixups, such as literal pool words,
+  // are not instructions and stay as they are).
+  const MCSubtargetInfo *FSTI = getSubtargetInfo(F);
+  bool TC32 = FSTI && FSTI->hasFeature(ARM::FeatureTC32) &&
+              Kind >= FirstTargetFixupKind && Endian == llvm::endianness::little;
+  auto convert = [&](uint16_t (*Conv)(uint16_t)) {
+    for (unsigned i = 0; i + 1 < NumBytes; i += 2) {
+      uint16_t HW = Conv(uint16_t(Data[i] | Data[i + 1] << 8));
+      Data[i] = uint8_t(HW);
+      Data[i + 1] = uint8_t(HW >> 8);
+    }
+  };
+  if (TC32)
+    convert(TC32::toThumb);
+
   // For each byte of the fragment that the fixup touches, mask in the bits from
   // the fixup value. The Value has been "split up" into the appropriate
   // bitfields above.
@@ -1143,6 +1162,9 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
         Endian == llvm::endianness::little ? i : (FullSizeBytes - 1 - i);
     Data[Idx] |= uint8_t((Value >> (i * 8)) & 0xff);
   }
+
+  if (TC32)
+    convert(TC32::toTC32);
 }
 
 namespace CU {

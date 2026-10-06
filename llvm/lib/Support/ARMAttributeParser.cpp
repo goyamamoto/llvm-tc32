@@ -73,6 +73,8 @@ Error ARMAttributeParser::stringAttribute(AttrType tag) {
   StringRef tagName =
       ELFAttrs::attrTypeAsString(tag, tagToStringMap, /*hasTagPrefix=*/false);
   StringRef desc = de.getCStrRef(cursor);
+  // Kept for getAttributeString (Tag_CPU_name marks TC32 objects).
+  setAttributeString(tag, desc);
 
   if (sw) {
     DictScope scope(*sw, "Attribute");

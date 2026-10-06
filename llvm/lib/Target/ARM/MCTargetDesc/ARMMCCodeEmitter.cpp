@@ -31,6 +31,7 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/TargetParser/TC32.h"
 #include "llvm/TargetParser/Triple.h"
 #include <cassert>
 #include <cstdint>
@@ -1959,7 +1960,18 @@ void ARMMCCodeEmitter::encodeInstruction(const MCInst &MI,
   auto Endian =
       IsLittleEndian ? llvm::endianness::little : llvm::endianness::big;
   uint32_t Binary = getBinaryCodeForInstr(MI, Fixups, STI);
-  if (Size == 2) {
+  if (isThumb(STI) && STI.hasFeature(ARM::FeatureTC32)) {
+    // TC32: each Thumb halfword in TC32's encoding. A fixup's fields are
+    // still zero here; ARMAsmBackend::applyFixup and the linker fill them in
+    // through the Thumb encoding.
+    if (Size == 4) {
+      support::endian::write<uint16_t>(
+          CB, TC32::encodeInstr(Binary >> 16), Endian);
+      Binary &= 0xffff;
+    }
+    support::endian::write<uint16_t>(CB, TC32::encodeInstr(Binary),
+                                     Endian);
+  } else if (Size == 2) {
     support::endian::write<uint16_t>(CB, Binary, Endian);
   } else if (isThumb(STI)) {
     // Thumb 32-bit wide instructions need to emit the high order halfword
