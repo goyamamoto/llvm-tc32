@@ -60,6 +60,15 @@ bool Thumb1FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const{
   return !MFI.hasVarSizedObjects();
 }
 
+// Whether a function may return by popping the saved LR straight into PC.
+// From v5T a POP into PC interworks: bit 0 of the loaded value selects the
+// Thumb or ARM state. On v4T a POP into PC never changes the state, so the
+// return is only correct when the caller is Thumb code too. That holds on a
+// Thumb-only core (no ARM state, FeatureNoARM), where every caller is Thumb.
+static bool canReturnWithPopPC(const ARMSubtarget &STI) {
+  return STI.hasV5TOps() || !STI.hasARMOps();
+}
+
 static void
 emitPrologueEpilogueSPUpdate(MachineBasicBlock &MBB,
                              MachineBasicBlock::iterator &MBBI,
@@ -613,11 +622,12 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   // instruction in the successor BB, we may be able to directly restore
   // LR in the PC.
   // This is only possible with v5T ops (v4T can't change the Thumb bit via
-  // a POP PC instruction), and only if we do not need to emit any SP update.
+  // a POP PC instruction) or on a core without ARM state, and only if we do
+  // not need to emit any SP update.
   // Otherwise, we need a temporary register to pop the value
   // and copy that value into LR.
   auto MBBI = MBB.getFirstTerminator();
-  bool CanRestoreDirectly = STI.hasV5TOps() && !ArgRegsSaveSize;
+  bool CanRestoreDirectly = canReturnWithPopPC(STI) && !ArgRegsSaveSize;
   if (CanRestoreDirectly) {
     if (MBBI != MBB.end() && MBBI->getOpcode() != ARM::tB)
       CanRestoreDirectly = (MBBI->getOpcode() == ARM::tBX_RET ||
@@ -927,7 +937,7 @@ static void popRegsFromStack(MachineBasicBlock &MBB,
                              const TargetInstrInfo &TII,
                              const std::set<Register> &RegsToRestore,
                              const std::set<Register> &AvailableCopyRegs,
-                             bool IsVarArg, bool HasV5Ops) {
+                             bool IsVarArg, bool CanPopPC) {
   if (RegsToRestore.empty())
     return;
 
@@ -1030,8 +1040,8 @@ static void popRegsFromStack(MachineBasicBlock &MBB,
         // Special epilogue for vararg functions. See emitEpilogue
         if (IsVarArg)
           continue;
-        // ARMv4T requires BX, see emitEpilogue
-        if (!HasV5Ops)
+        // ARMv4T with ARM state requires BX, see canReturnWithPopPC
+        if (!CanPopPC)
           continue;
 
         // CMSE entry functions must return via BXNS, see emitEpilogue.
@@ -1199,7 +1209,7 @@ bool Thumb1FrameLowering::restoreCalleeSavedRegisters(
 
   // First pop regular spilled regs.
   popRegsFromStack(MBB, MI, TII, SpilledGPRs, CopyRegs, IsVarArg,
-                   STI.hasV5TOps());
+                   canReturnWithPopPC(STI));
 
   // LR may only be popped into pc, as part of a return sequence.
   // Check that no other pop instructions are inserted after that.
@@ -1209,7 +1219,7 @@ bool Thumb1FrameLowering::restoreCalleeSavedRegisters(
   // Now pop Frame Record regs.
   // Only unused return registers can be used as copy regs at this point.
   popRegsFromStack(MBB, MI, TII, FrameRecord, UnusedReturnRegs, IsVarArg,
-                   STI.hasV5TOps());
+                   canReturnWithPopPC(STI));
 
   return true;
 }
